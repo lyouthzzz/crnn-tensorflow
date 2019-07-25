@@ -1,5 +1,5 @@
 import argparse
-from crnn import CRNN
+from crnn_net import CRNN
 
 def parse_arguments():
     """
@@ -32,7 +32,7 @@ def parse_arguments():
         type=str,
         nargs="?",
         help="The path where the pretrained model can be found or where the model will be saved",
-        default='./save/'
+        default='./model/save/'
     )
     parser.add_argument(
         "-ex",
@@ -51,11 +51,11 @@ def parse_arguments():
         default=64
     )
     parser.add_argument(
-        "-it",
-        "--iteration_count",
+        "-epoch",
+        "--epoch_count",
         type=int,
         nargs="?",
-        help="How many iteration in training",
+        help="How many epoch in training",
         default=10
     )
     parser.add_argument(
@@ -98,7 +98,7 @@ def main():
             args.restore
         )
 
-        crnn.train(args.iteration_count)
+        crnn.train(args.epoch_count)
 
     if args.test:
         if crnn is None:

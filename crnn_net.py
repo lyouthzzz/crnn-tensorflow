@@ -6,7 +6,7 @@ import config
 from scipy.misc import imread, imresize, imsave
 from tensorflow.contrib import rnn
 
-from data_manager import DataManager
+from data_loader import DataLoader
 from utils import sparse_tuple_from, resize_image, label_to_array, ground_truth_to_word, levenshtein
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
@@ -40,7 +40,6 @@ class CRNN(object):
 
         with self.__session.as_default():
             self.__saver = tf.train.Saver(tf.global_variables(), max_to_keep=10)
-            # Loading last save if needed
             if self.__restore:
                 print('Restoring')
                 ckpt = tf.train.latest_checkpoint(self.__model_path)
@@ -50,7 +49,7 @@ class CRNN(object):
                     self.__saver.restore(self.__session, ckpt)
 
         # Creating data_manager
-        self.__data_manager = DataManager(batch_size, model_path, examples_path, max_image_width, train_test_ratio, self.__max_char_count)
+        self.__data_loader = DataLoader(examples_path, batch_size, max_image_width, self.__max_char_count)
 
     def crnn(self, max_width, batch_size):
         def BidirectionnalRNN(inputs, seq_len):
@@ -175,23 +174,23 @@ class CRNN(object):
 
         return inputs, targets, seq_len, logits, dense_decoded, optimizer, acc, cost, max_char_count, init
 
-    def train(self, iteration_count):
+    def train(self, epoch_count):
         with self.__session.as_default():
             print('Training')
-            for i in range(self.step, iteration_count + self.step):
+            for i in range(self.step, epoch_count + self.step):
                 iter_loss = 0
-                for batch_y, batch_dt, batch_x in self.__data_manager.train_batches:
+                for batch_y, batch_dt, batch_x in self.__data_loader:
                     op, decoded, loss_value = self.__session.run(
                         [self.__optimizer, self.__decoded, self.__cost],
                         feed_dict={
                             self.__inputs: batch_x,
-                            self.__seq_len: [self.__max_char_count] * self.__data_manager.batch_size,
+                            self.__seq_len: [self.__max_char_count] * self.__data_loader.batch_size,
                             self.__targets: batch_dt
                         }
                     )
 
                     if i % 10 == 0:
-                        for j in range(2):
+                        for j in range(len(batch_y)):
                             print(batch_y[j])
                             print(ground_truth_to_word(decoded[j]))
 
@@ -203,7 +202,7 @@ class CRNN(object):
                     global_step=self.step
                 )
 
-                print('[{}] Iteration loss: {}'.format(self.step, iter_loss))
+                print('[{}] epoch loss: {}'.format(self.step, iter_loss))
 
                 self.step += 1
         return None
@@ -211,12 +210,12 @@ class CRNN(object):
     def test(self):
         with self.__session.as_default():
             print('Testing')
-            for batch_y, _, batch_x in self.__data_manager.test_batches:
+            for batch_y, _, batch_x in self.__data_loader.test_batches:
                 decoded = self.__session.run(
                     self.__decoded,
                     feed_dict={
                         self.__inputs: batch_x,
-                        self.__seq_len: [self.__max_char_count] * self.__data_manager.batch_size
+                        self.__seq_len: [self.__max_char_count] * self.__data_loader.batch_size
                     }
                 )
 

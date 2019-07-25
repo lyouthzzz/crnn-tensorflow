@@ -1,5 +1,4 @@
 import numpy as np
-import tensorflow as tf
 
 from scipy.misc import imread, imresize, imsave
 
@@ -56,9 +55,7 @@ def ground_truth_to_word(ground_truth):
     try:
         return ''.join([config.CHAR_VECTOR[i] for i in ground_truth if i != -1])
     except Exception as ex:
-        print(ground_truth)
-        print(ex)
-        input()
+        raise Exception('No char index [{}] in config '.format(ground_truth))
 
 def levenshtein(s1, s2):
     if len(s1) < len(s2):
