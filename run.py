@@ -32,7 +32,7 @@ def parse_arguments():
         type=str,
         nargs="?",
         help="The path where the pretrained model can be found or where the model will be saved",
-        default='./model/save/'
+        default='./model_save/'
     )
     parser.add_argument(
         "-ex",

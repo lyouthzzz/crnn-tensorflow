@@ -190,9 +190,8 @@ class CRNN(object):
                     )
 
                     if i % 10 == 0:
-                        for j in range(len(batch_y)):
-                            print(batch_y[j])
-                            print(ground_truth_to_word(decoded[j]))
+                        for j in range(2):
+                            print('true:[{}]  predict:[{}]'.format(batch_y[j], ground_truth_to_word(decoded[j])))
 
                     iter_loss += loss_value
 
@@ -210,7 +209,9 @@ class CRNN(object):
     def test(self):
         with self.__session.as_default():
             print('Testing')
-            for batch_y, _, batch_x in self.__data_loader.test_batches:
+            success_count = 0
+            total_count = 0
+            for batch_y, _, batch_x in self.__data_loader:
                 decoded = self.__session.run(
                     self.__decoded,
                     feed_dict={
@@ -218,8 +219,15 @@ class CRNN(object):
                         self.__seq_len: [self.__max_char_count] * self.__data_loader.batch_size
                     }
                 )
-
                 for i, y in enumerate(batch_y):
-                    print(batch_y[i])
-                    print(ground_truth_to_word(decoded[i]))
+                    total_count += 1
+                    true_label = batch_y[i]
+                    predict = ground_truth_to_word(decoded[i])
+                    if true_label == predict:
+                        print(true_label + '\t' + predict + '\t' + 'predict successfully')
+                        success_count += 1
+                    else:
+                        print(true_label + '\t' + predict + '\t' + 'predict failed')
+            print('准确率: ' + str(success_count/total_count))
+
         return None
