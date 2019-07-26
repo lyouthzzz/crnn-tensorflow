@@ -8,4 +8,4 @@
 - **run**: main函数入口
 - **utils**: 工具类
 
-[源作者项目连接](https://note.youdao.com/)
+[源作者项目连接](https://github.com/Belval/CRNN)
