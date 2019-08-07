@@ -41,16 +41,17 @@ class CRNN(object):
                 __init.run()
 
         with self.__session.as_default():
-            self.__saver = tf.train.Saver(tf.global_variables(), max_to_keep=10)
+            self.__saver = tf.train.Saver(tf.global_variables(), max_to_keep=1)
             if self.__restore:
-                print('Restoring')
                 ckpt = tf.train.latest_checkpoint(self.__model_path)
                 if ckpt:
-                    print('Checkpoint is valid')
                     self.step = int(ckpt.split('-')[1])
                     self.__saver.restore(self.__session, ckpt)
+                    print('restore model successfully')
+                else:
+                    print('restore model failed')
 
-        # Creating data_manager
+        # data loader
         self.__data_loader = DataLoader(examples_path, batch_size, max_image_width, self.__max_char_count)
 
     def crnn(self):
@@ -59,7 +60,7 @@ class CRNN(object):
                 Bidirectionnal LSTM Recurrent Neural Network part
             """
 
-            with tf.variable_scope(None, default_name="bidirectional-rnn-1"):
+            with tf.variable_scope(name_or_scope='bidirectional-rnn-1'):
                 # Forward
                 lstm_fw_cell_1 = rnn.BasicLSTMCell(256)
                 # Backward
@@ -69,7 +70,7 @@ class CRNN(object):
 
                 inter_output = tf.concat(inter_output, 2)
 
-            with tf.variable_scope(None, default_name="bidirectional-rnn-2"):
+            with tf.variable_scope(name_or_scope='bidirectional-rnn-2'):
                 # Forward
                 lstm_fw_cell_2 = rnn.BasicLSTMCell(256)
                 # Backward
@@ -86,45 +87,45 @@ class CRNN(object):
             """
                 Convolutionnal Neural Network part
             """
+            with tf.variable_scope(name_or_scope='cnn'):
+                # 64 / 3 x 3 / 1 / 1
+                conv1 = tf.layers.conv2d(inputs=inputs, filters = 64, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
 
-            # 64 / 3 x 3 / 1 / 1
-            conv1 = tf.layers.conv2d(inputs=inputs, filters = 64, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
+                # 2 x 2 / 1
+                pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 2], strides=2)
 
-            # 2 x 2 / 1
-            pool1 = tf.layers.max_pooling2d(inputs=conv1, pool_size=[2, 2], strides=2)
+                # 128 / 3 x 3 / 1 / 1
+                conv2 = tf.layers.conv2d(inputs=pool1, filters = 128, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
 
-            # 128 / 3 x 3 / 1 / 1
-            conv2 = tf.layers.conv2d(inputs=pool1, filters = 128, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
+                # 2 x 2 / 1
+                pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
 
-            # 2 x 2 / 1
-            pool2 = tf.layers.max_pooling2d(inputs=conv2, pool_size=[2, 2], strides=2)
+                # 256 / 3 x 3 / 1 / 1
+                conv3 = tf.layers.conv2d(inputs=pool2, filters = 256, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
 
-            # 256 / 3 x 3 / 1 / 1
-            conv3 = tf.layers.conv2d(inputs=pool2, filters = 256, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
+                # Batch normalization layer
+                bnorm1 = tf.layers.batch_normalization(conv3)
 
-            # Batch normalization layer
-            bnorm1 = tf.layers.batch_normalization(conv3)
+                # 256 / 3 x 3 / 1 / 1
+                conv4 = tf.layers.conv2d(inputs=bnorm1, filters = 256, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
 
-            # 256 / 3 x 3 / 1 / 1
-            conv4 = tf.layers.conv2d(inputs=bnorm1, filters = 256, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
+                # 1 x 2 / 1
+                pool3 = tf.layers.max_pooling2d(inputs=conv4, pool_size=[2, 2], strides=[1, 2], padding="same")
 
-            # 1 x 2 / 1
-            pool3 = tf.layers.max_pooling2d(inputs=conv4, pool_size=[2, 2], strides=[1, 2], padding="same")
+                # 512 / 3 x 3 / 1 / 1
+                conv5 = tf.layers.conv2d(inputs=pool3, filters = 512, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
 
-            # 512 / 3 x 3 / 1 / 1
-            conv5 = tf.layers.conv2d(inputs=pool3, filters = 512, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
+                # Batch normalization layer
+                bnorm2 = tf.layers.batch_normalization(conv5)
 
-            # Batch normalization layer
-            bnorm2 = tf.layers.batch_normalization(conv5)
+                # 512 / 3 x 3 / 1 / 1
+                conv6 = tf.layers.conv2d(inputs=bnorm2, filters = 512, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
 
-            # 512 / 3 x 3 / 1 / 1
-            conv6 = tf.layers.conv2d(inputs=bnorm2, filters = 512, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
+                # 1 x 2 / 2
+                pool4 = tf.layers.max_pooling2d(inputs=conv6, pool_size=[2, 2], strides=[1, 2], padding="same")
 
-            # 1 x 2 / 2
-            pool4 = tf.layers.max_pooling2d(inputs=conv6, pool_size=[2, 2], strides=[1, 2], padding="same")
-
-            # 512 / 2 x 2 / 1 / 0
-            conv7 = tf.layers.conv2d(inputs=pool4, filters = 512, kernel_size = (2, 2), padding = "valid", activation=tf.nn.relu)
+                # 512 / 2 x 2 / 1 / 0
+                conv7 = tf.layers.conv2d(inputs=pool4, filters = 512, kernel_size = (2, 2), padding = "valid", activation=tf.nn.relu)
 
             return conv7
 
@@ -161,39 +162,42 @@ class CRNN(object):
 
         crnn_model = BidirectionnalRNN(reshaped_cnn_output, sequence_length)
 
-        logits = tf.reshape(crnn_model, [-1, 512])
+        with tf.name_scope(name='fc'):
+            logits = tf.reshape(crnn_model, [-1, 512])
 
-        W = tf.Variable(tf.truncated_normal([512, config.NUM_CLASSES], stddev=0.1), name="W")
-        b = tf.Variable(tf.constant(0., shape=[config.NUM_CLASSES]), name="b")
+            W = tf.Variable(tf.truncated_normal([512, config.NUM_CLASSES], stddev=0.1), name="W")
+            b = tf.Variable(tf.constant(0., shape=[config.NUM_CLASSES]), name="b")
 
-        logits = tf.matmul(logits, W) + b
+            logits = tf.matmul(logits, W) + b
 
-        logits = tf.reshape(logits, [-1, max_char_count, config.NUM_CLASSES])
+            logits = tf.reshape(logits, [-1, max_char_count, config.NUM_CLASSES])
 
-        # Final layer, the output of the BLSTM
-        logits = tf.transpose(logits, (1, 0, 2))
+            # Final layer, the output of the BLSTM
+            logits = tf.transpose(logits, (1, 0, 2))
+
+        with tf.name_scope(name='predict'):
+            # The decoded answer
+            decoded, log_prob = tf.nn.ctc_beam_search_decoder(logits, sequence_length, merge_repeated=False)
+
+            dense_decoded = tf.sparse_tensor_to_dense(decoded[0], default_value=-1)
+
+            predict_out = label_text.lookup(dense_decoded, name='prediction')
 
         # Loss and cost calculation
-        loss = tf.nn.ctc_loss(targets_sparse_code, logits, sequence_length)
-
-        cost = tf.reduce_mean(loss)
+        with tf.name_scope(name='loss'):
+            loss = tf.nn.ctc_loss(targets_sparse_code, logits, sequence_length)
+            cost = tf.reduce_mean(loss)
 
         # Training step
         optimizer = tf.train.AdamOptimizer(learning_rate=0.0001).minimize(cost)
 
-        # The decoded answer
-        decoded, log_prob = tf.nn.ctc_beam_search_decoder(logits, sequence_length, merge_repeated=False)
-
-        dense_decoded = tf.sparse_tensor_to_dense(decoded[0], default_value=-1)
-
         # The error rate
-        acc = tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32), targets_sparse_code))
-
-        predict_out = label_text.lookup(dense_decoded)
+        with tf.name_scope(name='accuracy'):
+            accuracy = tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32), targets_sparse_code))
 
         inits = [tf.global_variables_initializer(), tf.tables_initializer()]
 
-        return inputs, targets, sequence_length, logits, dense_decoded, predict_out, optimizer, acc, cost, max_char_count, inits
+        return inputs, targets, sequence_length, logits, dense_decoded, predict_out, optimizer, accuracy, cost, max_char_count, inits
 
     def train(self, epoch_count):
         with self.__session.as_default():
