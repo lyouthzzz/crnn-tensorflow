@@ -128,13 +128,20 @@ class CRNN(object):
 
             return conv7
 
+        label_text = tf.contrib.lookup.HashTable(
+            tf.contrib.lookup.KeyValueTensorInitializer(tf.constant(config.ALPHABET_INDEX, dtype=tf.int64),
+                                                        tf.constant(config.ALPHABET, dtype=tf.string)),
+            default_value=''
+        )
+        text_label = tf.contrib.lookup.HashTable(
+            tf.contrib.lookup.KeyValueTensorInitializer(tf.constant(config.ALPHABET, dtype=tf.string),
+                                                        tf.constant(config.ALPHABET_INDEX, dtype=tf.int32)),
+            default_value=-1
+        )
+
         inputs = tf.placeholder(tf.float32, [None, 100, 32, 1], name='inputs')
-
-        # Our target output
         targets = tf.sparse_placeholder(tf.int32, name='targets')
-
-        # The length of the sequence
-        seq_len = tf.placeholder(tf.int32, [None], name='seq_len')
+        batch_size = tf.shape(inputs)[0]
 
         cnn_output = CNN(inputs)
         cnn_output_shape = cnn_output.get_shape().as_list()
@@ -143,7 +150,9 @@ class CRNN(object):
 
         max_char_count = reshaped_cnn_output.get_shape().as_list()[1]
 
-        crnn_model = BidirectionnalRNN(reshaped_cnn_output, seq_len)
+        sequence_length = tf.fill([batch_size], value=max_char_count, name='seq_len')
+
+        crnn_model = BidirectionnalRNN(reshaped_cnn_output, sequence_length)
 
         logits = tf.reshape(crnn_model, [-1, 512])
 
@@ -158,7 +167,7 @@ class CRNN(object):
         logits = tf.transpose(logits, (1, 0, 2))
 
         # Loss and cost calculation
-        loss = tf.nn.ctc_loss(targets, logits, seq_len)
+        loss = tf.nn.ctc_loss(targets, logits, sequence_length)
 
         cost = tf.reduce_mean(loss)
 
@@ -166,7 +175,7 @@ class CRNN(object):
         optimizer = tf.train.AdamOptimizer(learning_rate=0.0001).minimize(cost)
 
         # The decoded answer
-        decoded, log_prob = tf.nn.ctc_beam_search_decoder(logits, seq_len, merge_repeated=False)
+        decoded, log_prob = tf.nn.ctc_beam_search_decoder(logits, sequence_length, merge_repeated=False)
 
         dense_decoded = tf.sparse_tensor_to_dense(decoded[0], default_value=-1)
 
@@ -183,7 +192,7 @@ class CRNN(object):
 
         inits = [tf.global_variables_initializer(), tf.tables_initializer()]
 
-        return inputs, targets, seq_len, logits, dense_decoded, predict_out, optimizer, acc, cost, max_char_count, inits
+        return inputs, targets, sequence_length, logits, dense_decoded, predict_out, optimizer, acc, cost, max_char_count, inits
 
     def train(self, epoch_count):
         with self.__session.as_default():
@@ -195,7 +204,6 @@ class CRNN(object):
                         [self.__optimizer, self.__decoded, self.__cost],
                         feed_dict={
                             self.__inputs: batch_x,
-                            self.__seq_len: [self.__max_char_count] * self.__data_loader.batch_size,
                             self.__targets: batch_dt
                         }
                     )
