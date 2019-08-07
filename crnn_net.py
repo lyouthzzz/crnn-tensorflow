@@ -128,6 +128,7 @@ class CRNN(object):
 
             return conv7
 
+        # 定义 tensor map {text->code}  {code->text}
         label_text = tf.contrib.lookup.HashTable(
             tf.contrib.lookup.KeyValueTensorInitializer(tf.constant(config.ALPHABET_INDEX, dtype=tf.int64),
                                                         tf.constant(config.ALPHABET, dtype=tf.string)),
@@ -140,8 +141,14 @@ class CRNN(object):
         )
 
         inputs = tf.placeholder(tf.float32, [None, 100, 32, 1], name='inputs')
-        targets = tf.sparse_placeholder(tf.int32, name='targets')
+        targets = tf.placeholder(tf.string, name='labels')
         batch_size = tf.shape(inputs)[0]
+
+        # 预处理 targets_text(['asds', '3f3h']) 用于CTC loss计算
+        label_splited = tf.string_split(targets, delimiter='')
+        label_codes = text_label.lookup(label_splited.values)
+        targets_sparse_code = tf.SparseTensor(
+            label_splited.indices, label_codes, label_splited.dense_shape)
 
         cnn_output = CNN(inputs)
         cnn_output_shape = cnn_output.get_shape().as_list()
@@ -167,7 +174,7 @@ class CRNN(object):
         logits = tf.transpose(logits, (1, 0, 2))
 
         # Loss and cost calculation
-        loss = tf.nn.ctc_loss(targets, logits, sequence_length)
+        loss = tf.nn.ctc_loss(targets_sparse_code, logits, sequence_length)
 
         cost = tf.reduce_mean(loss)
 
@@ -180,15 +187,9 @@ class CRNN(object):
         dense_decoded = tf.sparse_tensor_to_dense(decoded[0], default_value=-1)
 
         # The error rate
-        acc = tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32), targets))
+        acc = tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32), targets_sparse_code))
 
-        table = tf.contrib.lookup.HashTable(
-            tf.contrib.lookup.KeyValueTensorInitializer(tf.constant(config.ALPHABET_INDEX, dtype=tf.int64),
-                                                        tf.constant(config.ALPHABET, dtype=tf.string)),
-            default_value=''
-        )
-
-        predict_out = table.lookup(dense_decoded)
+        predict_out = label_text.lookup(dense_decoded)
 
         inits = [tf.global_variables_initializer(), tf.tables_initializer()]
 
@@ -204,7 +205,7 @@ class CRNN(object):
                         [self.__optimizer, self.__decoded, self.__cost],
                         feed_dict={
                             self.__inputs: batch_x,
-                            self.__targets: batch_dt
+                            self.__targets: batch_y
                         }
                     )
 
