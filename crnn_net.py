@@ -30,13 +30,15 @@ class CRNN(object):
                 self.__seq_len,
                 self.__logits,
                 self.__decoded,
+                self.__predict,
                 self.__optimizer,
                 self.__acc,
                 self.__cost,
                 self.__max_char_count,
-                self.__init
-            ) = self.crnn(max_image_width, batch_size)
-            self.__init.run()
+                self.__inits
+            ) = self.crnn()
+            for __init in self.__inits:
+                __init.run()
 
         with self.__session.as_default():
             self.__saver = tf.train.Saver(tf.global_variables(), max_to_keep=10)
@@ -51,7 +53,7 @@ class CRNN(object):
         # Creating data_manager
         self.__data_loader = DataLoader(examples_path, batch_size, max_image_width, self.__max_char_count)
 
-    def crnn(self, max_width, batch_size):
+    def crnn(self):
         def BidirectionnalRNN(inputs, seq_len):
             """
                 Bidirectionnal LSTM Recurrent Neural Network part
@@ -126,7 +128,7 @@ class CRNN(object):
 
             return conv7
 
-        inputs = tf.placeholder(tf.float32, [batch_size, max_width, 32, 1])
+        inputs = tf.placeholder(tf.float32, [None, 100, 32, 1], name='inputs')
 
         # Our target output
         targets = tf.sparse_placeholder(tf.int32, name='targets')
@@ -135,8 +137,9 @@ class CRNN(object):
         seq_len = tf.placeholder(tf.int32, [None], name='seq_len')
 
         cnn_output = CNN(inputs)
+        cnn_output_shape = cnn_output.get_shape().as_list()
 
-        reshaped_cnn_output = tf.reshape(cnn_output, [batch_size, -1, 512])
+        reshaped_cnn_output = tf.reshape(cnn_output, [-1, cnn_output_shape[1] * cnn_output_shape[2], 512])
 
         max_char_count = reshaped_cnn_output.get_shape().as_list()[1]
 
@@ -149,7 +152,7 @@ class CRNN(object):
 
         logits = tf.matmul(logits, W) + b
 
-        logits = tf.reshape(logits, [batch_size, -1, config.NUM_CLASSES])
+        logits = tf.reshape(logits, [-1, max_char_count, config.NUM_CLASSES])
 
         # Final layer, the output of the BLSTM
         logits = tf.transpose(logits, (1, 0, 2))
@@ -170,9 +173,17 @@ class CRNN(object):
         # The error rate
         acc = tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32), targets))
 
-        init = tf.global_variables_initializer()
+        table = tf.contrib.lookup.HashTable(
+            tf.contrib.lookup.KeyValueTensorInitializer(tf.constant(config.ALPHABET_INDEX, dtype=tf.int64),
+                                                        tf.constant(config.ALPHABET, dtype=tf.string)),
+            default_value=''
+        )
 
-        return inputs, targets, seq_len, logits, dense_decoded, optimizer, acc, cost, max_char_count, init
+        predict_out = table.lookup(dense_decoded)
+
+        inits = [tf.global_variables_initializer(), tf.tables_initializer()]
+
+        return inputs, targets, seq_len, logits, dense_decoded, predict_out, optimizer, acc, cost, max_char_count, inits
 
     def train(self, epoch_count):
         with self.__session.as_default():
