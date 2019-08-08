@@ -11,7 +11,8 @@ def parse_arguments():
     parser.add_argument(
         "--train",
         action="store_true",
-        help="Define if we train the model"
+        help="Define if we train the model",
+        default=True
     )
     parser.add_argument(
         "--test",
@@ -40,7 +41,8 @@ def parse_arguments():
         type=str,
         nargs="?",
         help="The path to the file containing the examples (training samples)",
-        required=True
+        required=True,
+        default="./samples/shixinren/test"
     )
     parser.add_argument(
         "-bs",
@@ -74,6 +76,15 @@ def parse_arguments():
         help="Define if we try to load a checkpoint file from the save folder"
     )
 
+    parser.add_argument(
+        "-sp",
+        "--summary_path",
+        type=str,
+        nargs="?",
+        help="The path to the file containing the examples (training samples)",
+        default="./summary"
+    )
+
     return parser.parse_args()
 
 def main():
@@ -94,8 +105,8 @@ def main():
             args.model_path,
             args.examples_path,
             args.max_image_width,
-            args.train_test_ratio,
-            args.restore
+            args.restore,
+            args.summary_path
         )
 
         crnn.train(args.epoch_count)

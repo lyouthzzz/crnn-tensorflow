@@ -12,7 +12,7 @@ from utils import sparse_tuple_from, resize_image, label_to_array, ground_truth_
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 
 class CRNN(object):
-    def __init__(self, batch_size, model_path, examples_path, max_image_width, train_test_ratio, restore):
+    def __init__(self, batch_size, model_path, examples_path, max_image_width, restore, summary_path):
         self.step = 0
         self.__model_path = model_path
         self.__save_path = os.path.join(model_path, 'ckp')
@@ -35,7 +35,8 @@ class CRNN(object):
                 self.__acc,
                 self.__cost,
                 self.__max_char_count,
-                self.__inits
+                self.__inits,
+                self.__summary_merged
             ) = self.crnn()
             for __init in self.__inits:
                 __init.run()
@@ -50,6 +51,8 @@ class CRNN(object):
                     print('restore model successfully')
                 else:
                     print('restore model failed')
+
+            self.__summary_writer= tf.summary.FileWriter(summary_path, self.__session.graph)
 
         # data loader
         self.__data_loader = DataLoader(examples_path, batch_size, max_image_width, self.__max_char_count)
@@ -127,7 +130,10 @@ class CRNN(object):
                 # 512 / 2 x 2 / 1 / 0
                 conv7 = tf.layers.conv2d(inputs=pool4, filters = 512, kernel_size = (2, 2), padding = "valid", activation=tf.nn.relu)
 
-            return conv7
+                cnn_output_shape = conv7.get_shape().as_list()
+                cnn_output = tf.reshape(conv7, [-1, cnn_output_shape[1] * cnn_output_shape[2], 512])
+
+            return cnn_output
 
         # 定义 tensor map {text->code}  {code->text}
         label_text = tf.contrib.lookup.HashTable(
@@ -141,26 +147,30 @@ class CRNN(object):
             default_value=-1
         )
 
-        inputs = tf.placeholder(tf.float32, [None, 100, 32, 1], name='inputs')
-        targets = tf.placeholder(tf.string, name='labels')
-        batch_size = tf.shape(inputs)[0]
+        with tf.name_scope(name='x_y_inputs'):
+            inputs = tf.placeholder(tf.float32, [None, 100, 32, 1], name='inputs')
+            targets = tf.placeholder(tf.string, name='labels')
+            batch_size = tf.shape(inputs)[0]
 
         # 预处理 targets_text(['asds', '3f3h']) 用于CTC loss计算
-        label_splited = tf.string_split(targets, delimiter='')
-        label_codes = text_label.lookup(label_splited.values)
-        targets_sparse_code = tf.SparseTensor(
-            label_splited.indices, label_codes, label_splited.dense_shape)
+        with tf.name_scope(name='transformLabels'):
+            label_splited = tf.string_split(targets, delimiter='')
+            label_codes = text_label.lookup(label_splited.values)
+            targets_sparse_code = tf.SparseTensor(
+                label_splited.indices, label_codes, label_splited.dense_shape)
 
         cnn_output = CNN(inputs)
-        cnn_output_shape = cnn_output.get_shape().as_list()
 
-        reshaped_cnn_output = tf.reshape(cnn_output, [-1, cnn_output_shape[1] * cnn_output_shape[2], 512])
+        # with tf.variable_scope('cnn_out_reshape'):
+        #     cnn_output_shape = cnn_output.get_shape().as_list()
+        #
+        #     reshaped_cnn_output = tf.reshape(cnn_output, [-1, cnn_output_shape[1] * cnn_output_shape[2], 512])
+        with tf.name_scope(name='sequence_length'):
+            max_char_count = cnn_output.get_shape().as_list()[1]
 
-        max_char_count = reshaped_cnn_output.get_shape().as_list()[1]
+            sequence_length = tf.fill([batch_size], value=max_char_count, name='seq_len')
 
-        sequence_length = tf.fill([batch_size], value=max_char_count, name='seq_len')
-
-        crnn_model = BidirectionnalRNN(reshaped_cnn_output, sequence_length)
+        crnn_model = BidirectionnalRNN(cnn_output, sequence_length)
 
         with tf.name_scope(name='fc'):
             logits = tf.reshape(crnn_model, [-1, 512])
@@ -188,16 +198,21 @@ class CRNN(object):
             loss = tf.nn.ctc_loss(targets_sparse_code, logits, sequence_length)
             cost = tf.reduce_mean(loss)
 
-        # Training step
-        optimizer = tf.train.AdamOptimizer(learning_rate=0.0001).minimize(cost)
+        with tf.name_scope(name='optimize'):
+            # Training step
+            optimizer = tf.train.AdamOptimizer(learning_rate=0.0001).minimize(cost)
 
         # The error rate
         with tf.name_scope(name='accuracy'):
             accuracy = tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32), targets_sparse_code))
 
+        tf.summary.scalar('loss', cost)
+        tf.summary.scalar('accuracy', accuracy)
+
         inits = [tf.global_variables_initializer(), tf.tables_initializer()]
 
-        return inputs, targets, sequence_length, logits, dense_decoded, predict_out, optimizer, accuracy, cost, max_char_count, inits
+        summary_merged = tf.summary.merge_all()
+        return inputs, targets, sequence_length, logits, dense_decoded, predict_out, optimizer, accuracy, cost, max_char_count, inits, summary_merged
 
     def train(self, epoch_count):
         with self.__session.as_default():
@@ -205,8 +220,8 @@ class CRNN(object):
             for i in range(self.step, epoch_count + self.step):
                 iter_loss = 0
                 for batch_y, batch_dt, batch_x in self.__data_loader:
-                    op, decoded, loss_value = self.__session.run(
-                        [self.__optimizer, self.__decoded, self.__cost],
+                    _, predict_out, loss_value, accuracy, all_summary = self.__session.run(
+                        [self.__optimizer, self.__predict, self.__cost, self.__acc, self.__summary_merged],
                         feed_dict={
                             self.__inputs: batch_x,
                             self.__targets: batch_y
@@ -215,9 +230,10 @@ class CRNN(object):
 
                     if i % 10 == 0:
                         for j in range(2):
-                            print('true:[{}]  predict:[{}]'.format(batch_y[j], ground_truth_to_word(decoded[j])))
+                            print('true:[{}]  predict:[{}]'.format(batch_y[j], ''.join([str(i, encoding='utf-8') for i in predict_out[j]])))
 
                     iter_loss += loss_value
+                    self.__summary_writer.add_summary(all_summary, self.step)
 
                 self.__saver.save(
                     self.__session,
@@ -228,6 +244,7 @@ class CRNN(object):
                 print('[{}] epoch loss: {}'.format(self.step, iter_loss))
 
                 self.step += 1
+            self.__summary_writer.close()
         return None
 
     def test(self):
@@ -236,17 +253,16 @@ class CRNN(object):
             success_count = 0
             total_count = 0
             for batch_y, _, batch_x in self.__data_loader:
-                decoded = self.__session.run(
-                    self.__decoded,
+                predict_out = self.__session.run(
+                    self.__predict,
                     feed_dict={
-                        self.__inputs: batch_x,
-                        self.__seq_len: [self.__max_char_count] * self.__data_loader.batch_size
+                        self.__inputs: batch_x
                     }
                 )
                 for i, y in enumerate(batch_y):
                     total_count += 1
                     true_label = batch_y[i]
-                    predict = ground_truth_to_word(decoded[i])
+                    predict = ''.join([str(i, encoding='utf-8') for i in predict_out[i]])
                     if true_label == predict:
                         print(true_label + '\t' + predict + '\t' + 'predict successfully')
                         success_count += 1
