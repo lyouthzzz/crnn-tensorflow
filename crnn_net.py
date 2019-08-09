@@ -42,7 +42,7 @@ class CRNN(object):
                 __init.run()
 
         with self.__session.as_default():
-            self.__saver = tf.train.Saver(tf.global_variables(), max_to_keep=1)
+            self.__saver = tf.train.Saver(tf.global_variables(), max_to_keep=10)
             if self.__restore:
                 ckpt = tf.train.latest_checkpoint(self.__model_path)
                 if ckpt:
@@ -63,7 +63,7 @@ class CRNN(object):
                 Bidirectionnal LSTM Recurrent Neural Network part
             """
 
-            with tf.variable_scope(name_or_scope='bidirectional-rnn-1'):
+            with tf.variable_scope('bi-lstm-1'):
                 # Forward
                 lstm_fw_cell_1 = rnn.BasicLSTMCell(256)
                 # Backward
@@ -72,8 +72,7 @@ class CRNN(object):
                 inter_output, _ = tf.nn.bidirectional_dynamic_rnn(lstm_fw_cell_1, lstm_bw_cell_1, inputs, seq_len, dtype=tf.float32)
 
                 inter_output = tf.concat(inter_output, 2)
-
-            with tf.variable_scope(name_or_scope='bidirectional-rnn-2'):
+            with tf.variable_scope('bi-lstm-2'):
                 # Forward
                 lstm_fw_cell_2 = rnn.BasicLSTMCell(256)
                 # Backward
@@ -90,7 +89,7 @@ class CRNN(object):
             """
                 Convolutionnal Neural Network part
             """
-            with tf.variable_scope(name_or_scope='cnn'):
+            with tf.variable_scope('cnn'):
                 # 64 / 3 x 3 / 1 / 1
                 conv1 = tf.layers.conv2d(inputs=inputs, filters = 64, kernel_size = (3, 3), padding = "same", activation=tf.nn.relu)
 
@@ -147,13 +146,12 @@ class CRNN(object):
             default_value=-1
         )
 
-        with tf.name_scope(name='x_y_inputs'):
-            inputs = tf.placeholder(tf.float32, [None, 100, 32, 1], name='inputs')
-            targets = tf.placeholder(tf.string, name='labels')
-            batch_size = tf.shape(inputs)[0]
+        inputs = tf.placeholder(tf.float32, [None, 100, 32, 1], name='inputs')
+        targets = tf.placeholder(tf.string, name='labels')
+        batch_size = tf.shape(inputs)[0]
 
         # 预处理 targets_text(['asds', '3f3h']) 用于CTC loss计算
-        with tf.name_scope(name='transformLabels'):
+        with tf.name_scope(name='transform'):
             label_splited = tf.string_split(targets, delimiter='')
             label_codes = text_label.lookup(label_splited.values)
             targets_sparse_code = tf.SparseTensor(
@@ -161,10 +159,6 @@ class CRNN(object):
 
         cnn_output = CNN(inputs)
 
-        # with tf.variable_scope('cnn_out_reshape'):
-        #     cnn_output_shape = cnn_output.get_shape().as_list()
-        #
-        #     reshaped_cnn_output = tf.reshape(cnn_output, [-1, cnn_output_shape[1] * cnn_output_shape[2], 512])
         with tf.name_scope(name='sequence_length'):
             max_char_count = cnn_output.get_shape().as_list()[1]
 
@@ -185,13 +179,13 @@ class CRNN(object):
             # Final layer, the output of the BLSTM
             logits = tf.transpose(logits, (1, 0, 2))
 
-        with tf.name_scope(name='predict'):
+        with tf.name_scope(name='decode'):
             # The decoded answer
             decoded, log_prob = tf.nn.ctc_beam_search_decoder(logits, sequence_length, merge_repeated=False)
 
             dense_decoded = tf.sparse_tensor_to_dense(decoded[0], default_value=-1)
 
-            predict_out = label_text.lookup(dense_decoded, name='prediction')
+        predict_out = label_text.lookup(dense_decoded, name='prediction')
 
         # Loss and cost calculation
         with tf.name_scope(name='loss'):
@@ -204,13 +198,12 @@ class CRNN(object):
 
         # The error rate
         with tf.name_scope(name='accuracy'):
-            accuracy = tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32), targets_sparse_code))
+            accuracy = 1 - tf.reduce_mean(tf.edit_distance(tf.cast(decoded[0], tf.int32), targets_sparse_code))
 
         tf.summary.scalar('loss', cost)
         tf.summary.scalar('accuracy', accuracy)
 
         inits = [tf.global_variables_initializer(), tf.tables_initializer()]
-
         summary_merged = tf.summary.merge_all()
         return inputs, targets, sequence_length, logits, dense_decoded, predict_out, optimizer, accuracy, cost, max_char_count, inits, summary_merged
 
@@ -227,7 +220,7 @@ class CRNN(object):
                             self.__targets: batch_y
                         }
                     )
-
+                    print('train accuracy : %.3f' % accuracy)
                     if i % 10 == 0:
                         for j in range(2):
                             print('true:[{}]  predict:[{}]'.format(batch_y[j], ''.join([str(i, encoding='utf-8') for i in predict_out[j]])))
@@ -240,6 +233,24 @@ class CRNN(object):
                     self.__save_path,
                     global_step=self.step
                 )
+
+                # test
+                test_loader = DataLoader('./samples/shixinren/test', 64, 100, self.__max_char_count)
+                success = 0
+                failed = 0
+                for batch_y, batch_dt, batch_x in test_loader:
+                    test_predict_arr = self.__session.run(self.__predict, feed_dict={self.__inputs: batch_x})
+                    test_predict_list = []
+                    for _test_predict in test_predict_arr:
+                        _test_predict = ''.join([str(i, encoding='utf-8') for i in _test_predict])
+                        test_predict_list.append(_test_predict)
+                    success += sum(batch_y == np.array(test_predict_list))
+                    failed += sum(batch_y != np.array(test_predict_list))
+                test_accuracy = success / (success + failed)
+                print('test accuracy : %.3f' % test_accuracy)
+                if test_accuracy > 0.98:
+                    print('yeah ~ accuracy > 0.98 stop ')
+                    break
 
                 print('[{}] epoch loss: {}'.format(self.step, iter_loss))
 
